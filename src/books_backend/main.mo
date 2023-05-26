@@ -5,35 +5,60 @@ import Cycles "mo:base/ExperimentalCycles";
 import Text "mo:base/Text";
 import Types "Types";
 import Error "mo:base/Error";
-import Principal "mo:base/Principal";
 import Debug "mo:base/Debug";
+import Iter "mo:base/Iter";
 
 actor {
-  type User = Principal;
-  type BookList = HashMap.HashMap<Text, Text>;
+  var favoritebook = HashMap.HashMap<Text, Text>(0, Text.equal, Text.hash);
 
-  var favoritebook = HashMap.HashMap<Principal, Text>(0, Principal.equal, Principal.hash);
+  public func addBook(name : Text, url : Text) : async Text {
+    let response: Types.CanisterHttpResponsePayload = await proxy(url);
+    let decodedResponse : Text = await decodeResponse(response.body);
 
-  public shared(msg) func getUser() : async Principal {
-    let currentUser = msg.caller;
-    return currentUser;
+    favoritebook.put(name, decodedResponse);
+    Debug.print("Your favorite book has been saved, " # name # "! Thanks :D");
+
+    return decodedResponse;
   };
 
-  public shared(msg) func addBook(url: Text) : async Text {
-    let book: Text = await proxy(url);
-    let owner: Principal = msg.caller;
+  public func getRandomBook() : async Text {
+    let response: Types.CanisterHttpResponsePayload = await proxy("https://openlibrary.org/random");
+    
+    let randomBook: Text = await getLocationHeaders(response.headers);
 
-    favoritebook.put(owner, book);
-    Debug.print("Your favorite book has been saved! " # Principal.toText(owner) # ". Thanks!");
+    let randomBookInfo: Types.CanisterHttpResponsePayload = await proxy(randomBook # ".json");
+    let decodedResponse : Text = await decodeResponse(randomBookInfo.body);
 
-    return book;
+    return decodedResponse;
   };
 
-  public func getBook(account : Principal): async ?Text {
+  public func getBook(account : Text): async ?Text {
     return favoritebook.get(account);
   };
 
-  public func proxy(url : Text) : async Text {
+  public func searchBook(queryString : [Text]): async Text {
+    var url = "https://openlibrary.org/search.json?q=";
+    
+    for (word in queryString.vals()) {
+      url := url # word #"%20";
+    };
+    url := Text.trimEnd(url, #char '0');
+    url := Text.trimEnd(url, #char '2');
+    url := Text.trimEnd(url, #char '%');
+
+    url := url # "&_spellcheck_count=0&limit=10&fields=key,cover_i,title,subtitle,author_name,name&mode=everything";
+
+    let response: Types.CanisterHttpResponsePayload = await proxy(url);
+    let decodedResponse : Text = await decodeResponse(response.body);
+
+    return decodedResponse;
+  };
+
+  public func getAllBooks() : async [(Text, Text)] {
+    return Iter.toArray<(Text, Text)>(favoritebook.entries());
+  };
+
+  public func proxy(url : Text) : async Types.CanisterHttpResponsePayload {
 
     let transform_context : Types.TransformContext = {
       function = transform;
@@ -53,40 +78,35 @@ actor {
     Cycles.add(220_000_000_000);
     let ic : Types.IC = actor ("aaaaa-aa");
     let response : Types.CanisterHttpResponsePayload = await ic.http_request(request);
-    
-    let text_decoded: ?Text = Text.decodeUtf8(Blob.fromArray(response.body));
-
-    let textOrNot : Text = switch text_decoded {
-      case null "";
-      case (?Text) Text;
-    };
-
-    textOrNot;
+    return response;
   };
 
   public query func transform(raw : Types.TransformArgs) : async Types.CanisterHttpResponsePayload {
     let transformed : Types.CanisterHttpResponsePayload = {
       status = raw.response.status;
       body = raw.response.body;
-      headers = [
-        {
-          name = "Content-Security-Policy";
-          value = "default-src 'self'";
-        },
-        { name = "Referrer-Policy"; value = "strict-origin" },
-        { name = "Permissions-Policy"; value = "geolocation=(self)" },
-        {
-          name = "Strict-Transport-Security";
-          value = "max-age=63072000";
-        },
-        { name = "X-Frame-Options"; value = "DENY" },
-        { name = "X-Content-Type-Options"; value = "nosniff" },
-      ];
+      headers = raw.response.headers;
     };
     transformed;
   };
 
-  public query func greet(name : Text) : async Text {
-    return "Hello, " # name # "!";
+  public func decodeResponse(body : [Nat8]) : async Text {
+    let text_decoded: ?Text = Text.decodeUtf8(Blob.fromArray(body));
+
+    let checked_text : Text = switch text_decoded {
+      case null "";
+      case (?Text) Text;
+    };
+
+    checked_text;
+  };
+
+  public func getLocationHeaders(headers: [Types.HttpHeader]) : async Text {
+    for (header in headers.vals()) {
+      if (header.name == "location") {
+        return header.value;
+      }
+    };
+    return "";
   };
 };

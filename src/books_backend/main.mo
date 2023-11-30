@@ -1,5 +1,4 @@
 import Blob "mo:base/Blob";
-import serdeJson "mo:serde/JSON";
 import HashMap "mo:base/HashMap";
 import Cycles "mo:base/ExperimentalCycles";
 import Text "mo:base/Text";
